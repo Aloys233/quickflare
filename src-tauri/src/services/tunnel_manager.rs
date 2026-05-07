@@ -309,7 +309,7 @@ fn spawn_supervisor(
             let tunnel_token = secrets::tunnel_token().ok().flatten();
             let tunnel_token = tunnel_token.as_deref();
 
-            let bin = match provider.resolve_binary(override_path.as_deref()) {
+            let bin = match provider.resolve_binary(Some(&app), override_path.as_deref()) {
                 Ok(p) => p,
                 Err(e) => {
                     fail_tunnel(&app, &handle, &e.to_string());

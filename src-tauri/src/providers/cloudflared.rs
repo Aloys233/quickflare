@@ -12,6 +12,9 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tauri::AppHandle;
+#[cfg(target_os = "windows")]
+use tauri::Manager;
 
 /// Matches the line cloudflared prints once a Quick Tunnel is ready, e.g.
 ///   `2024-01-01T12:00:00Z INF |  https://abcd-ef.trycloudflare.com  |`
@@ -32,10 +35,23 @@ impl TunnelProvider for CloudflaredProvider {
         "Cloudflare Tunnel"
     }
 
-    fn resolve_binary(&self, override_path: Option<&str>) -> AppResult<PathBuf> {
+    fn resolve_binary(
+        &self,
+        app: Option<&AppHandle>,
+        override_path: Option<&str>,
+    ) -> AppResult<PathBuf> {
+        #[cfg(not(target_os = "windows"))]
+        let _ = app;
+
         if let Some(p) = override_path {
             let path = PathBuf::from(p);
             if path.exists() {
+                return Ok(path);
+            }
+        }
+
+        if let Some(app) = app {
+            if let Some(path) = downloaded_binary_path(app) {
                 return Ok(path);
             }
         }
@@ -83,6 +99,46 @@ impl TunnelProvider for CloudflaredProvider {
 
     fn url_extractor(&self) -> UrlExtractor {
         Arc::new(|line: &str| URL_RE.find(line).map(|m| m.as_str().to_string()))
+    }
+}
+
+pub fn downloaded_binary_path(app: &AppHandle) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let path = app
+            .path()
+            .app_data_dir()
+            .ok()?
+            .join("bin")
+            .join("cloudflared.exe");
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = app;
+
+    None
+}
+
+pub fn download_target_path(app: &AppHandle) -> AppResult<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(app
+            .path()
+            .app_data_dir()
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .join("bin")
+            .join("cloudflared.exe"))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Err(AppError::Internal(
+            "automatic cloudflared download is only supported on Windows".into(),
+        ))
     }
 }
 

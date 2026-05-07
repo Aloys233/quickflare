@@ -2,12 +2,42 @@
 /**
  * 设置 — 偏好项 + cloudflared 路径。
  */
-import { ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useSettingsStore } from "@/stores/settings";
+import { Events, type CloudflaredDownloadProgress } from "@/types";
 
 const store = useSettingsStore();
 const tokenInput = ref("");
+const downloadingCloudflared = ref(false);
+const downloadProgress = ref<CloudflaredDownloadProgress | null>(null);
+const downloadError = ref<string | null>(null);
+const selectedMirror = ref("https://hk.gh-proxy.org");
+let offDownloadProgress: UnlistenFn | null = null;
+
+const mirrors = [
+  "https://hk.gh-proxy.org",
+  "https://gh-proxy.org",
+  "https://cdn.gh-proxy.org",
+  "https://edgeone.gh-proxy.org",
+];
+
+listen<CloudflaredDownloadProgress>(
+  Events.CloudflaredDownloadProgress,
+  (event) => {
+    downloadProgress.value = event.payload;
+    if (event.payload.phase === "failed") {
+      downloadError.value = event.payload.message ?? "下载失败";
+    }
+  },
+).then((off) => {
+  offDownloadProgress = off;
+});
+
+onBeforeUnmount(() => {
+  offDownloadProgress?.();
+});
 
 const local = ref({ ...store.settings });
 watch(
@@ -27,6 +57,39 @@ async function pickBinary() {
 
 async function clearBinary() {
   await store.update({ cloudflaredPath: null });
+}
+
+async function downloadCloudflared() {
+  downloadingCloudflared.value = true;
+  downloadProgress.value = null;
+  downloadError.value = null;
+  try {
+    await store.downloadCloudflared(selectedMirror.value);
+  } catch (e) {
+    downloadError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    downloadingCloudflared.value = false;
+  }
+}
+
+const downloadPercent = computed(() => {
+  const progress = downloadProgress.value;
+  const total = progress?.total;
+  if (!total) return 0;
+  return Math.min(100, Math.round((progress.downloaded / total) * 100));
+});
+
+const downloadSize = computed(() => {
+  const progress = downloadProgress.value;
+  if (!progress) return "";
+  const downloaded = formatBytes(progress.downloaded);
+  if (!progress.total) return downloaded;
+  return `${downloaded} / ${formatBytes(progress.total)}`;
+});
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(0, bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function commit<K extends keyof typeof local.value>(
@@ -73,8 +136,8 @@ async function clearToken() {
         <div>
           <h2 class="text-base font-semibold text-primary">cloudflared</h2>
           <p class="mt-1 max-w-md text-sm text-muted">
-            Quickflare 使用官方的 cloudflared CLI。在此覆盖路径可跳过 PATH
-            查找，直接使用打包的二进制。
+            Quickflare 使用官方的 cloudflared CLI。在此覆盖路径可跳过自动下载和 PATH
+            查找。
           </p>
         </div>
         <span
@@ -95,8 +158,54 @@ async function clearToken() {
       <div
         class="mono mt-4 break-all rounded-md border hairline bg-[var(--bg)] px-3 py-2.5 text-sm"
       >
-        {{ store.cloudflared?.path ?? "PATH 中未找到" }}
+        {{ store.cloudflared?.path ?? "尚未就绪" }}
       </div>
+      <div
+        v-if="!store.cloudflared?.installed"
+        class="mt-4 rounded-lg border hairline bg-[var(--bg)] p-4"
+      >
+        <div class="grid gap-3 md:grid-cols-[1fr_auto]">
+          <select
+            class="input-text"
+            v-model="selectedMirror"
+            :disabled="downloadingCloudflared"
+          >
+            <option v-for="mirror in mirrors" :key="mirror" :value="mirror">
+              {{ mirror }}
+            </option>
+          </select>
+          <button
+            class="btn btn-primary"
+            :disabled="downloadingCloudflared"
+            @click="downloadCloudflared"
+          >
+            {{ downloadingCloudflared ? "下载中" : "下载 cloudflared" }}
+          </button>
+        </div>
+
+        <div
+          v-if="downloadProgress"
+          class="mt-3"
+        >
+          <div class="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+            <div
+              class="h-full rounded-full bg-brand transition-all"
+              :style="{ width: `${downloadPercent}%` }"
+            />
+          </div>
+          <div class="mt-2 flex items-center justify-between gap-3 text-xs text-muted">
+            <span class="truncate">
+              {{ downloadProgress.phase === "finished" ? "下载完成" : downloadProgress.url }}
+            </span>
+            <span class="shrink-0 mono">{{ downloadSize }}</span>
+          </div>
+        </div>
+
+        <p v-if="downloadError" class="mt-3 text-xs text-red-600 dark:text-red-400">
+          {{ downloadError }}
+        </p>
+      </div>
+
       <div class="mt-3 flex gap-2">
         <button class="btn" @click="pickBinary">选择二进制…</button>
         <button

@@ -79,6 +79,21 @@ export interface CloudflaredStatus {
   overrideUsed: boolean;
 }
 
+export type CloudflaredDownloadPhase =
+  | "starting"
+  | "downloading"
+  | "finished"
+  | "failed";
+
+export interface CloudflaredDownloadProgress {
+  phase: CloudflaredDownloadPhase;
+  url: string;
+  downloaded: number;
+  total: number | null;
+  path: string | null;
+  message: string | null;
+}
+
 export interface Settings {
   autoRestart: boolean;
   launchAtLogin: boolean;
@@ -104,6 +119,7 @@ export const Events = {
   TunnelLog: "tunnel://log",
   TunnelRemoved: "tunnel://removed",
   ScannerUpdated: "scanner://updated",
+  CloudflaredDownloadProgress: "cloudflared://download-progress",
   TrayNavigate: "tray://navigate",
   TrayQuickCreate: "tray://quick-create",
   AppHiddenToTray: "app://hidden-to-tray",

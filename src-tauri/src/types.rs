@@ -150,6 +150,7 @@ pub struct CreateTunnelInput {
 pub mod events {
     pub const TUNNEL_UPDATED: &str = "tunnel://updated";
     pub const TUNNEL_LOG: &str = "tunnel://log";
+    pub const CLOUDFLARED_DOWNLOAD_PROGRESS: &str = "cloudflared://download-progress";
     #[allow(dead_code)]
     pub const TUNNEL_REMOVED: &str = "tunnel://removed";
     /// Reserved for future scanner change events — emitted from a watcher.

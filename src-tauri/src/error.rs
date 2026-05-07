@@ -15,7 +15,7 @@ use thiserror::Error;
 #[allow(dead_code)] // some variants are reserved for future validation paths
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("cloudflared binary not found in PATH — install it first")]
+    #[error("cloudflared binary not found in bundled resources or PATH")]
     CloudflaredMissing,
 
     #[error("tunnel `{0}` is not running")]

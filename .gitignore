@@ -26,6 +26,7 @@ Thumbs.db
 target/
 src-tauri/target/
 src-tauri/.tauri/
+src-tauri/binaries/
 
 # Keep Cargo.lock for this desktop application.
 !src-tauri/Cargo.lock

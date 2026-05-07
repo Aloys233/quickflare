@@ -54,6 +54,10 @@ export const useSettingsStore = defineStore("settings", {
       this.cloudflared = await api.cloudflaredStatus();
     },
 
+    async downloadCloudflared(mirror?: string): Promise<void> {
+      this.cloudflared = await api.downloadCloudflared(mirror);
+    },
+
     async saveTunnelToken(token: string): Promise<void> {
       this.tunnelToken = await api.saveTunnelToken(token);
     },

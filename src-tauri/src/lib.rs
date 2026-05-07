@@ -80,6 +80,7 @@ pub fn run() {
             commands::tunnel::remove_tunnel,
             commands::tunnel::restart_tunnel,
             commands::system::cloudflared_status,
+            commands::system::download_cloudflared,
             commands::system::get_settings,
             commands::system::save_settings,
             commands::system::tunnel_token_status,

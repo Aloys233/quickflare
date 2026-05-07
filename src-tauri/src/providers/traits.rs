@@ -9,6 +9,7 @@ use crate::error::AppResult;
 use crate::types::TunnelProviderKind;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tauri::AppHandle;
 
 /// A regex-style URL extractor: when called against a single line of the
 /// child's stdout, it returns the public URL if the line announces one.
@@ -26,7 +27,11 @@ pub trait TunnelProvider: Send + Sync {
     /// Resolve the executable on disk. The resolver is responsible for
     /// trying `$PATH`, well-known install locations and the user's
     /// override from settings.
-    fn resolve_binary(&self, override_path: Option<&str>) -> AppResult<std::path::PathBuf>;
+    fn resolve_binary(
+        &self,
+        app: Option<&AppHandle>,
+        override_path: Option<&str>,
+    ) -> AppResult<std::path::PathBuf>;
 
     /// Build the argv used to launch a tunnel for `target`. Excludes the
     /// program name itself — callers prepend that.

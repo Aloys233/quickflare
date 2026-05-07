@@ -31,6 +31,10 @@ export const api = {
 
   // System ---------------------------------------------------------------
   cloudflaredStatus: () => invoke<CloudflaredStatus>("cloudflared_status"),
+  downloadCloudflared: (mirror?: string) =>
+    invoke<CloudflaredStatus>("download_cloudflared", {
+      input: mirror ? { mirror } : null,
+    }),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) =>
     invoke<void>("save_settings", { settings }),
