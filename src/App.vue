@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
 
     <main class="flex min-w-0 flex-1 flex-col overflow-hidden">
       <router-view v-slot="{ Component }">
-        <transition name="page" mode="out-in">
+        <transition name="page" mode="out-in" appear>
           <component :is="Component" />
         </transition>
       </router-view>
