@@ -3,6 +3,50 @@
 @tailwind utilities;
 
 /* ─────────────────────────────────────────────────────────────────────────
+ *  本地字体 — Inter + JetBrains Mono (latin subset, OFL-1.1)
+ *
+ *  打包进二进制以避免运行时拉 Google Fonts。CJK 字符走 font-family
+ *  fallback (PingFang SC / Microsoft YaHei / Noto Sans CJK)，所以这里
+ *  不声明 unicode-range —— 让浏览器逐字符回退即可。
+ * ─────────────────────────────────────────────────────────────────────── */
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./assets/fonts/inter-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./assets/fonts/inter-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./assets/fonts/inter-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./assets/fonts/jetbrains-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./assets/fonts/jetbrains-mono-500.woff2") format("woff2");
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
  *  Quickflare — 全局样式
  *
  *  设计目标：

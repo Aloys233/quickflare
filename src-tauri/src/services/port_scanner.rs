@@ -87,6 +87,29 @@ pub fn scan() -> AppResult<Vec<ListeningPort>> {
     }
 
     let mut ports: Vec<ListeningPort> = by_port.into_values().collect();
-    ports.sort_by_key(|p| p.port);
+    ports.sort_by_key(|p| (priority_rank(p.port), p.port));
     Ok(ports)
+}
+
+/// 常见开发/调试端口排序权重 —— 数值越小越靠前。
+/// 命中表内端口按表中顺序排列，未命中的统一排在后面再按端口号升序。
+fn priority_rank(port: u16) -> u32 {
+    const COMMON: &[u16] = &[
+        1420,  // Tauri
+        5173,  // Vite
+        3000,  // Next.js / Node 默认
+        4321,  // Astro
+        8080,  // 常见 HTTP 替代
+        8000,  // Django / Python
+        5000,  // Flask / .NET
+        4200,  // Angular
+        8888,  // Jupyter
+        9000,  // PHP-FPM / 通用
+        3001, 8001, 8443, 80, 443,
+    ];
+    COMMON
+        .iter()
+        .position(|&p| p == port)
+        .map(|i| i as u32)
+        .unwrap_or(u32::MAX)
 }

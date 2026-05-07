@@ -352,6 +352,15 @@ fn spawn_supervisor(
                 cmd.process_group(0);
             }
 
+            #[cfg(windows)]
+            {
+                // CREATE_NO_WINDOW — without this, Windows attaches a console
+                // to cloudflared.exe and a black `cmd` window flashes (or
+                // sticks) every time we start a tunnel.
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+
             let child: Child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
