@@ -22,8 +22,26 @@ use providers::{ProviderRegistry, cloudflared::CloudflaredProvider};
 use services::tunnel_manager::TunnelManager;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
+#[cfg(target_os = "linux")]
+fn configure_linux_webview_environment() {
+    // WebKitGTK's DMABuf renderer can fail EGL initialization on some
+    // Wayland/NVIDIA/driver combinations before the Tauri window exists.
+    // Set the fallback before GTK/WebKit starts reading process env.
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // SAFETY: `run` is entered at process startup, before Tauri creates
+        // threads or initializes GTK/WebKit, so mutating the process
+        // environment here cannot race other Rust code in this process.
+        unsafe {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    configure_linux_webview_environment();
+
     let app = tauri::Builder::default()
         // ── Plugins ──────────────────────────────────────────────────
         .plugin(tauri_plugin_log::Builder::new().build())

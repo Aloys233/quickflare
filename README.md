@@ -162,6 +162,15 @@ bar's appearance.
 - Quickflare uses `tauri-plugin-os` so it can adapt the tray code path
   per-DE if needed in the future. Today's tray works on Plasma 5.27+
   out of the box thanks to the StatusNotifierItem support.
+- On some Wayland/EGL driver stacks, WebKitGTK can abort during startup with
+  `Could not create default EGL display: EGL_BAD_PARAMETER`. Quickflare sets
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1` by default on Linux builds to use
+  WebKitGTK's fallback renderer. For an already-built AppImage, launch it with:
+
+  ```bash
+  WEBKIT_DISABLE_DMABUF_RENDERER=1 ./Quickflare_0.1.0_amd64.AppImage
+  ```
+
 - We disable native window decorations (`decorations: false`) and ship
   our own minimal title bar — keeps the typography consistent with the
   rest of the UI under both `kwin_x11` and `kwin_wayland`.
