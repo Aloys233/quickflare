@@ -151,7 +151,8 @@ pub mod events {
     pub const TUNNEL_UPDATED: &str = "tunnel://updated";
     pub const TUNNEL_LOG: &str = "tunnel://log";
     pub const CLOUDFLARED_DOWNLOAD_PROGRESS: &str = "cloudflared://download-progress";
-    #[allow(dead_code)]
+    /// Emitted when a tunnel is dropped from the manager entirely, so the
+    /// UI can remove the row without waiting for the next poll.
     pub const TUNNEL_REMOVED: &str = "tunnel://removed";
     /// Reserved for future scanner change events — emitted from a watcher.
     #[allow(dead_code)]

@@ -27,6 +27,8 @@ interface State {
   bound: boolean;
   unlisten: UnlistenFn[];
   pollHandle: number | null;
+  /** Last user-visible failure from a tunnel action, or null. */
+  lastError: string | null;
 }
 
 export const useTunnelsStore = defineStore("tunnels", {
@@ -35,6 +37,7 @@ export const useTunnelsStore = defineStore("tunnels", {
     bound: false,
     unlisten: [],
     pollHandle: null,
+    lastError: null,
   }),
 
   getters: {
@@ -45,9 +48,17 @@ export const useTunnelsStore = defineStore("tunnels", {
       ),
     live: (state): TunnelSnapshot[] =>
       Object.values(state.tunnels).filter((t) => t.status === "live"),
-    /** Most-recently created tunnel — used for the dashboard hero. */
+    /**
+     * The tunnel shown in the dashboard hero. Prefers a tunnel the user is
+     * actually using over the newest row — otherwise stopping the most
+     * recent tunnel promotes a dead one into the hero slot.
+     */
     primary(): TunnelSnapshot | null {
-      return this.list[0] ?? null;
+      return (
+        this.list.find((t) => t.status === "live" || t.status === "starting") ??
+        this.list[0] ??
+        null
+      );
     },
   },
 
@@ -60,14 +71,22 @@ export const useTunnelsStore = defineStore("tunnels", {
     },
 
     async create(port: number, label?: string): Promise<TunnelSnapshot> {
-      const snap = await api.createTunnel({
-        provider: "cloudflared",
-        localPort: port,
-        label: label ?? null,
-      });
-      this.tunnels[snap.id] = snap;
-      this.ensurePolling();
-      return snap;
+      try {
+        const snap = await api.createTunnel({
+          provider: "cloudflared",
+          localPort: port,
+          label: label ?? null,
+        });
+        this.lastError = null;
+        this.tunnels[snap.id] = snap;
+        this.ensurePolling();
+        return snap;
+      } catch (e) {
+        // The create view navigates away immediately, so an unhandled
+        // rejection here would leave the user with no feedback at all.
+        this.reportError(e);
+        throw e;
+      }
     },
 
     async stop(id: string): Promise<void> {
@@ -81,28 +100,62 @@ export const useTunnelsStore = defineStore("tunnels", {
         };
       }
       this.ensurePolling();
-      await api.stopTunnel(id);
+      try {
+        await api.stopTunnel(id);
+      } catch (e) {
+        this.reportError(e);
+        throw e;
+      }
     },
 
     async restart(id: string): Promise<TunnelSnapshot> {
-      const snap = await api.restartTunnel(id);
-      this.tunnels[snap.id] = snap;
-      return snap;
+      try {
+        const snap = await api.restartTunnel(id);
+        // The backend mints a fresh id for the relaunched tunnel, so the
+        // old row has to go — waiting for the next poll leaves a stale
+        // duplicate visible for a few seconds.
+        if (snap.id !== id) delete this.tunnels[id];
+        this.tunnels[snap.id] = this.withUrlFromLogs(snap);
+        this.ensurePolling();
+        return snap;
+      } catch (e) {
+        this.reportError(e);
+        throw e;
+      }
     },
 
     async remove(id: string): Promise<void> {
       delete this.tunnels[id];
       this.ensurePolling();
-      await api.removeTunnel(id);
+      try {
+        await api.removeTunnel(id);
+      } catch (e) {
+        this.reportError(e);
+        throw e;
+      }
     },
 
+    reportError(e: unknown): void {
+      this.lastError = e instanceof Error ? e.message : String(e);
+    },
+
+    clearError(): void {
+      this.lastError = null;
+    },
+
+    /**
+     * Safety-net poll. Tauri events are the primary source of truth — this
+     * only re-syncs after a missed event, so it is deliberately slow and
+     * skips entirely while the window is hidden in the tray.
+     */
     ensurePolling(): void {
       if (this.pollHandle != null) return;
       this.pollHandle = window.setInterval(() => {
+        if (document.hidden) return;
         void this.refresh().catch((e) => {
           console.error("[tunnels] poll refresh failed:", e);
         });
-      }, 1000);
+      }, 3000);
     },
 
     stopPolling(): void {
@@ -139,7 +192,13 @@ export const useTunnelsStore = defineStore("tunnels", {
             this.tunnels[e.payload.tunnelId] = {
               ...t,
               publicUrl: t.publicUrl ?? url ?? null,
-              status: t.publicUrl || url ? "live" : t.status,
+              // Only ever *promote* a starting tunnel. A shutdown log line
+              // that happens to quote the URL must not flip a stopping
+              // tunnel back to live.
+              status:
+                t.status === "starting" && (t.publicUrl || url)
+                  ? "live"
+                  : t.status,
               recentLogs: next,
             };
           }),

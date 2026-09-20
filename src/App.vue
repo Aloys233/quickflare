@@ -6,7 +6,7 @@
  * 主内容里的子 store 在 onMounted 异步初始化，每个 await 都包一层
  * try/catch — 确保即便某个 store 初始化失败，UI 仍然可见可操作。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useRouter } from "vue-router";
 import Sidebar from "@/components/Sidebar.vue";
@@ -23,11 +23,12 @@ const logs = useLogsStore();
 const router = useRouter();
 
 const offFns: UnlistenFn[] = [];
-const showCloudflaredPrompt = ref(false);
+const cloudflaredPromptDismissed = ref(false);
 const downloadingCloudflared = ref(false);
 const cloudflaredDownload = ref<CloudflaredDownloadProgress | null>(null);
 const cloudflaredDownloadError = ref<string | null>(null);
 const selectedMirror = ref("https://hk.gh-proxy.org");
+let errorTimer = 0;
 
 const mirrors = [
   "https://hk.gh-proxy.org",
@@ -35,6 +36,20 @@ const mirrors = [
   "https://cdn.gh-proxy.org",
   "https://edgeone.gh-proxy.org",
 ];
+
+/** Only meaningful once `settings.hydrate()` has resolved. */
+const cloudflaredMissing = computed(
+  () => settings.cloudflared !== null && !settings.cloudflared.installed,
+);
+
+/** Auto-download only exists on Windows; elsewhere we point at the docs. */
+const canDownloadCloudflared = computed(
+  () => settings.cloudflared?.canDownload === true,
+);
+
+const showCloudflaredPrompt = computed(
+  () => cloudflaredMissing.value && !cloudflaredPromptDismissed.value,
+);
 
 const cloudflaredDownloadPercent = computed(() => {
   const progress = cloudflaredDownload.value;
@@ -61,8 +76,9 @@ async function downloadCloudflared() {
   cloudflaredDownload.value = null;
   cloudflaredDownloadError.value = null;
   try {
+    // On success `settings.cloudflared.installed` flips to true and the
+    // prompt closes on its own — no need to poke the flag directly.
     await settings.downloadCloudflared(selectedMirror.value);
-    showCloudflaredPrompt.value = false;
   } catch (e) {
     cloudflaredDownloadError.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -70,11 +86,39 @@ async function downloadCloudflared() {
   }
 }
 
+function dismissCloudflaredPrompt() {
+  cloudflaredPromptDismissed.value = true;
+}
+
+function openSettings() {
+  cloudflaredPromptDismissed.value = true;
+  void router.push("/settings");
+}
+
+// Surface action failures. The create view navigates away the moment the
+// user submits, so a rejected `create_tunnel` has nowhere else to land.
+watch(
+  () => tunnels.lastError,
+  (message) => {
+    window.clearTimeout(errorTimer);
+    if (!message) return;
+    errorTimer = window.setTimeout(() => tunnels.clearError(), 8000);
+  },
+);
+
+// Changing the scan interval in Settings has to take effect immediately —
+// the poll was previously only started once, at mount.
+watch(
+  () => settings.settings.scanIntervalSeconds,
+  (next) => {
+    if (next !== scanner.intervalSeconds) scanner.startPolling(next);
+  },
+);
+
 onMounted(async () => {
   // hydrate 失败不应阻塞 UI 渲染 —— 任意一步失败都打日志继续。
   try {
     await settings.hydrate();
-    showCloudflaredPrompt.value = !settings.cloudflared?.installed;
   } catch (e) {
     console.error("[hydrate] settings:", e);
   }
@@ -123,6 +167,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   for (const off of offFns) off();
+  window.clearTimeout(errorTimer);
   scanner.stopPolling();
   void tunnels.dispose();
   void logs.dispose();
@@ -149,22 +194,27 @@ onBeforeUnmount(() => {
     <section class="surface w-full max-w-lg rounded-xl p-6 shadow-2xl">
       <header class="flex items-start justify-between gap-4">
         <div>
-          <h2 class="text-base font-semibold text-primary">下载 cloudflared</h2>
+          <h2 class="text-base font-semibold text-primary">
+            {{ canDownloadCloudflared ? "下载 cloudflared" : "需要 cloudflared" }}
+          </h2>
           <p class="mt-1 text-sm text-muted">
-            Quickflare 需要 cloudflared 才能创建公网隧道。
+            Quickflare 依赖官方的 cloudflared CLI 才能创建公网隧道。
           </p>
         </div>
         <button
           class="btn btn-ghost"
           type="button"
           :disabled="downloadingCloudflared"
-          @click="showCloudflaredPrompt = false"
+          @click="dismissCloudflaredPrompt"
         >
           稍后
         </button>
       </header>
 
-      <div class="mt-5 grid gap-3 md:grid-cols-[1fr_auto]">
+      <div
+        v-if="canDownloadCloudflared"
+        class="mt-5 grid gap-3 md:grid-cols-[1fr_auto]"
+      >
         <select
           class="input-text"
           v-model="selectedMirror"
@@ -181,6 +231,24 @@ onBeforeUnmount(() => {
           @click="downloadCloudflared"
         >
           {{ downloadingCloudflared ? "下载中" : "下载" }}
+        </button>
+      </div>
+
+      <div v-else class="mt-5 rounded-lg border hairline bg-[var(--bg)] p-4">
+        <p class="text-sm text-muted">
+          请先用系统包管理器安装 cloudflared，例如
+          <code class="mono text-primary">sudo apt install cloudflared</code>
+          、
+          <code class="mono text-primary">brew install cloudflared</code>
+          ，或前往
+          <code class="mono text-primary">developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/</code>
+          。
+        </p>
+        <p class="mt-2 text-xs text-dim">
+          已经装好了？在「设置」里指定二进制路径即可。
+        </p>
+        <button class="btn mt-3" type="button" @click="openSettings">
+          打开设置
         </button>
       </div>
 
@@ -211,4 +279,22 @@ onBeforeUnmount(() => {
       </p>
     </section>
   </div>
+
+  <!-- 操作失败提示 -->
+  <Transition name="page">
+    <div
+      v-if="tunnels.lastError"
+      class="fixed bottom-5 right-5 z-50 flex w-full max-w-sm items-start gap-3 rounded-lg border border-red-500/30 bg-[var(--bg-elev)] px-4 py-3 shadow-lg"
+    >
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-medium text-primary">操作失败</p>
+        <p class="mt-0.5 break-words text-xs text-muted">
+          {{ tunnels.lastError }}
+        </p>
+      </div>
+      <button class="btn btn-ghost shrink-0" @click="tunnels.clearError()">
+        关闭
+      </button>
+    </div>
+  </Transition>
 </template>

@@ -13,13 +13,15 @@
 
 use crate::services::tunnel_manager::TunnelManager;
 use crate::types::TunnelStatus;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
     AppHandle, Manager,
+    image::Image,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 
-/// Menu item identifiers — kept short, matched in the click handler.
+/// Tray menu item identifiers — kept short, matched in the click handler.
 mod ids {
     pub const OPEN: &str = "tray:open";
     pub const CREATE: &str = "tray:create";
@@ -29,13 +31,30 @@ mod ids {
     pub const QUIT: &str = "tray:quit";
 }
 
-/// Build the tray on startup. We register a *static* skeleton menu now —
-/// the dynamic sections (active tunnels, recent ports) are rebuilt on
-/// every right-click via `rebuild_menu()`.
+/// `true` once a tray icon actually exists on this desktop.
+///
+/// Some Linux sessions (sway / hyprland without an SNI host) have no tray
+/// at all. When that happens we must *not* hide the window on close —
+/// otherwise the app becomes unreachable.
+static TRAY_AVAILABLE: AtomicBool = AtomicBool::new(false);
+
+pub fn is_available() -> bool {
+    TRAY_AVAILABLE.load(Ordering::Relaxed)
+}
+
+/// Build the tray on startup. The dynamic sections (active tunnels, recent
+/// ports) are refreshed by `rebuild_menu()` whenever tunnel state changes.
 pub fn install_tray(app: &AppHandle) -> tauri::Result<()> {
-    let menu = build_menu(app, &TrayMenuModel::empty())?;
+    let menu = build_menu(app, &collect_model(app))?;
+
+    // The icon is embedded in the binary — `tauri.conf.json` deliberately
+    // does *not* declare an `app.trayIcon`, because Tauri would then create
+    // a second, menu-less tray icon with the same id.
+    let icon = Image::from_bytes(include_bytes!("../icons/tray.png"))?;
 
     let _tray = TrayIconBuilder::with_id("quickflare-tray")
+        .icon(icon)
+        .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip("Quickflare")
@@ -54,12 +73,18 @@ pub fn install_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| handle_menu_event(app, event))
         .build(app)?;
 
+    TRAY_AVAILABLE.store(true, Ordering::Relaxed);
     Ok(())
 }
 
-/// Rebuild and swap the tray menu — call this whenever tunnels change.
-#[allow(dead_code)]
+/// Rebuild and swap the tray menu — called whenever tunnels change.
+///
+/// Safe to call from any thread: `TrayIcon::set_menu` hops to the main
+/// thread internally, and this function never holds a `TunnelManager` lock.
 pub fn rebuild_menu(app: &AppHandle) {
+    if !is_available() {
+        return;
+    }
     let model = collect_model(app);
     if let Ok(menu) = build_menu(app, &model)
         && let Some(tray) = app.tray_by_id("quickflare-tray")
@@ -68,7 +93,6 @@ pub fn rebuild_menu(app: &AppHandle) {
     }
 }
 
-#[derive(Default)]
 struct TrayMenuModel {
     active: Vec<ActiveItem>,
     recent_ports: Vec<u16>,
@@ -81,13 +105,6 @@ struct ActiveItem {
     is_live: bool,
 }
 
-impl TrayMenuModel {
-    fn empty() -> Self {
-        Self::default()
-    }
-}
-
-#[allow(dead_code)]
 fn collect_model(app: &AppHandle) -> TrayMenuModel {
     let manager = app.state::<TunnelManager>();
     let active = manager

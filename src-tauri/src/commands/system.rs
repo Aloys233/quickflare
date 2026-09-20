@@ -18,6 +18,8 @@ pub struct CloudflaredStatus {
     pub installed: bool,
     pub path: Option<String>,
     pub override_used: bool,
+    /// Whether the "download cloudflared" flow can work on this platform.
+    pub can_download: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,16 +73,25 @@ pub fn cloudflared_status(
     let provider = registry
         .get(TunnelProviderKind::Cloudflared)
         .expect("cloudflared registered at startup");
+    // `override_used` should only be true when the override is what actually
+    // won — a stale path that no longer exists falls through to PATH.
+    let override_matched = |resolved: &std::path::Path| {
+        override_path
+            .as_deref()
+            .is_some_and(|o| std::path::Path::new(o) == resolved)
+    };
     match provider.resolve_binary(Some(&app), override_path.as_deref()) {
         Ok(p) => CloudflaredStatus {
             installed: true,
+            override_used: override_matched(&p),
             path: Some(p.display().to_string()),
-            override_used: override_path.is_some(),
+            can_download: cloudflared::download_supported(),
         },
         Err(_) => CloudflaredStatus {
             installed: false,
             path: None,
-            override_used: override_path.is_some(),
+            override_used: false,
+            can_download: cloudflared::download_supported(),
         },
     }
 }
@@ -96,6 +107,7 @@ pub async fn download_cloudflared(
             installed: true,
             path: Some(target.display().to_string()),
             override_used: false,
+            can_download: cloudflared::download_supported(),
         });
     }
 
@@ -108,6 +120,7 @@ pub async fn download_cloudflared(
                     installed: true,
                     path: Some(target.display().to_string()),
                     override_used: false,
+                    can_download: cloudflared::download_supported(),
                 });
             }
             Err(e) => {
@@ -139,7 +152,14 @@ pub fn get_settings(app: AppHandle) -> AppResult<Settings> {
 
 #[tauri::command]
 pub fn save_settings(app: AppHandle, settings: Settings) -> AppResult<()> {
-    StoreHandle::open(&app)?.save_settings(&settings)
+    StoreHandle::open(&app)?.save_settings(&settings)?;
+    // Mirror the launch-at-login preference onto the OS. A failure here
+    // (read-only HOME, unsupported platform, …) must not lose the rest of
+    // the user's settings, so it is logged rather than returned.
+    if let Err(e) = crate::services::autostart::set_enabled(settings.launch_at_login) {
+        log::warn!("[autostart] could not update launch-at-login: {e}");
+    }
+    Ok(())
 }
 
 #[tauri::command]

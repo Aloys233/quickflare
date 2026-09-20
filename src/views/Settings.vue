@@ -31,13 +31,22 @@ listen<CloudflaredDownloadProgress>(
       downloadError.value = event.payload.message ?? "下载失败";
     }
   },
-).then((off) => {
-  offDownloadProgress = off;
-});
+)
+  .then((off) => {
+    offDownloadProgress = off;
+  })
+  .catch((e) => {
+    console.error("[settings] progress listener failed to attach:", e);
+  });
 
 onBeforeUnmount(() => {
   offDownloadProgress?.();
 });
+
+/** Auto-download only exists on Windows — see `cloudflared::download_supported`. */
+const canDownloadCloudflared = computed(
+  () => store.cloudflared?.canDownload === true,
+);
 
 const local = ref({ ...store.settings });
 watch(
@@ -164,45 +173,55 @@ async function clearToken() {
         v-if="!store.cloudflared?.installed"
         class="mt-4 rounded-lg border hairline bg-[var(--bg)] p-4"
       >
-        <div class="grid gap-3 md:grid-cols-[1fr_auto]">
-          <select
-            class="input-text"
-            v-model="selectedMirror"
-            :disabled="downloadingCloudflared"
-          >
-            <option v-for="mirror in mirrors" :key="mirror" :value="mirror">
-              {{ mirror }}
-            </option>
-          </select>
-          <button
-            class="btn btn-primary"
-            :disabled="downloadingCloudflared"
-            @click="downloadCloudflared"
-          >
-            {{ downloadingCloudflared ? "下载中" : "下载 cloudflared" }}
-          </button>
-        </div>
-
-        <div
-          v-if="downloadProgress"
-          class="mt-3"
-        >
-          <div class="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-            <div
-              class="h-full rounded-full bg-brand transition-all"
-              :style="{ width: `${downloadPercent}%` }"
-            />
+        <template v-if="canDownloadCloudflared">
+          <div class="grid gap-3 md:grid-cols-[1fr_auto]">
+            <select
+              class="input-text"
+              v-model="selectedMirror"
+              :disabled="downloadingCloudflared"
+            >
+              <option v-for="mirror in mirrors" :key="mirror" :value="mirror">
+                {{ mirror }}
+              </option>
+            </select>
+            <button
+              class="btn btn-primary"
+              :disabled="downloadingCloudflared"
+              @click="downloadCloudflared"
+            >
+              {{ downloadingCloudflared ? "下载中" : "下载 cloudflared" }}
+            </button>
           </div>
-          <div class="mt-2 flex items-center justify-between gap-3 text-xs text-muted">
-            <span class="truncate">
-              {{ downloadProgress.phase === "finished" ? "下载完成" : downloadProgress.url }}
-            </span>
-            <span class="shrink-0 mono">{{ downloadSize }}</span>
-          </div>
-        </div>
 
-        <p v-if="downloadError" class="mt-3 text-xs text-red-600 dark:text-red-400">
-          {{ downloadError }}
+          <div
+            v-if="downloadProgress"
+            class="mt-3"
+          >
+            <div class="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+              <div
+                class="h-full rounded-full bg-brand transition-all"
+                :style="{ width: `${downloadPercent}%` }"
+              />
+            </div>
+            <div class="mt-2 flex items-center justify-between gap-3 text-xs text-muted">
+              <span class="truncate">
+                {{ downloadProgress.phase === "finished" ? "下载完成" : downloadProgress.url }}
+              </span>
+              <span class="shrink-0 mono">{{ downloadSize }}</span>
+            </div>
+          </div>
+
+          <p v-if="downloadError" class="mt-3 text-xs text-red-600 dark:text-red-400">
+            {{ downloadError }}
+          </p>
+        </template>
+
+        <p v-else class="text-sm text-muted">
+          本平台不支持应用内下载。请用系统包管理器安装，例如
+          <code class="mono text-primary">sudo apt install cloudflared</code>
+          （Debian/Ubuntu）或
+          <code class="mono text-primary">brew install cloudflared</code>
+          （macOS），然后用下面的「选择二进制…」指定路径。
         </p>
       </div>
 
@@ -368,7 +387,7 @@ async function clearToken() {
 
     <footer class="text-center text-xs text-dim">
       <p class="text-sm font-medium text-primary">Quickflare</p>
-      <p class="mt-1">v0.1.0 · 为 Linux 优先而生 · Wayland 友好</p>
+      <p class="mt-1">v0.1.4 · 为 Linux 优先而生 · Wayland 友好</p>
     </footer>
   </section>
 </template>

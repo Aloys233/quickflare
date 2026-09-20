@@ -142,6 +142,16 @@ pub fn download_target_path(app: &AppHandle) -> AppResult<PathBuf> {
     }
 }
 
+/// Whether Quickflare can fetch a cloudflared build on this platform.
+///
+/// Only Windows is automated — Linux and macOS users install through their
+/// package manager, and the `.deb` / `.rpm` bundles pull cloudflared in as
+/// a recommended package. The UI uses this to hide a download button that
+/// could only ever fail.
+pub const fn download_supported() -> bool {
+    cfg!(target_os = "windows")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,8 +6,14 @@
  *  - 顶部下拉可单选某个隧道
  *  - 自动跟随到底部（新行到达时滚到底）
  *  - 一键清空 / 复制
+ *
+ * 数据源只有 `logs.entries` 一个：它在启动时从各隧道的 recentLogs 灌
+ * 一次历史，之后由 `tunnel://log` 事件追加。之前这里还额外把
+ * `tunnels` store 的快照合并进来，后果是「清空」按钮清了 1 秒后又被
+ * 轮询填满，而且按 `${tunnelId}\n${line}` 去重会把 cloudflared 重复
+ * 打印的行吃掉。
  */
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -24,36 +30,10 @@ const filter = ref<string>(String(route.query.tunnel ?? "all"));
 const autoScroll = ref(true);
 const scrollEl = ref<HTMLDivElement | null>(null);
 
-const snapshotEntries = computed(() =>
-  tunnels.list.flatMap((t) =>
-    t.recentLogs.map((line, index) => ({
-      tunnelId: t.id,
-      line,
-      stream: "stdout" as const,
-      at: new Date(
-        new Date(t.updatedAt).getTime() -
-          Math.max(t.recentLogs.length - index - 1, 0),
-      ).toISOString(),
-    })),
-  ),
-);
-
-const mergedEntries = computed(() => {
-  const seen = new Set<string>();
-  return [...snapshotEntries.value, ...entries.value]
-    .filter((e) => {
-      const key = `${e.tunnelId}\n${e.line}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
-});
-
 const filtered = computed(() =>
   filter.value === "all"
-    ? mergedEntries.value
-    : mergedEntries.value.filter((e) => e.tunnelId === filter.value),
+    ? entries.value
+    : entries.value.filter((e) => e.tunnelId === filter.value),
 );
 
 const tunnelOptions = computed(() => [
@@ -104,12 +84,6 @@ async function copyAll() {
     .join("\n");
   await writeText(text);
 }
-
-onMounted(() => {
-  void tunnels.refresh().catch((e) => {
-    console.error("[logs] refresh failed:", e);
-  });
-});
 </script>
 
 <template>

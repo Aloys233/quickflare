@@ -60,6 +60,11 @@ struct TunnelHandle {
     restart_count: u32,
     last_restart: Option<std::time::Instant>,
     edge_failure_count: u32,
+    /// Set by `remove()` before the entry leaves the pool. The supervisor
+    /// keeps running for a moment after that (it still has to reap the
+    /// child), and this flag stops it from publishing a trailing
+    /// `Stopped` update for a tunnel the user already dismissed.
+    removed: bool,
 }
 
 impl TunnelHandle {
@@ -185,6 +190,7 @@ impl TunnelManager {
             restart_count: 0,
             last_restart: None,
             edge_failure_count: 0,
+            removed: false,
         }));
 
         self.inner.lock().insert(id.clone(), handle.clone());
@@ -192,6 +198,9 @@ impl TunnelManager {
             &handle,
             format!("[quickflare] preparing tunnel for {target}"),
         );
+
+        // Let the tray pick up the new entry right away.
+        publish(&app, &handle);
 
         // Spawn the supervisor — it will outlive this function.
         spawn_supervisor(
@@ -210,7 +219,7 @@ impl TunnelManager {
 
     /// Send a graceful shutdown signal. The supervisor flushes stdout and
     /// kills the child if it doesn't exit on its own.
-    pub fn stop(&self, _app: &AppHandle, id: &str) -> AppResult<()> {
+    pub fn stop(&self, app: &AppHandle, id: &str) -> AppResult<()> {
         let handle = {
             let guard = self.inner.lock();
             guard
@@ -231,15 +240,33 @@ impl TunnelManager {
         if let Some(tx) = tx {
             let _ = tx.send(());
         }
+        publish(app, &handle);
         Ok(())
     }
 
     /// Stop + remove a tunnel from the manager entirely.
     pub fn remove(&self, app: &AppHandle, id: &str) -> AppResult<()> {
+        let handle = {
+            let guard = self.inner.lock();
+            guard
+                .get(id)
+                .cloned()
+                .ok_or_else(|| AppError::TunnelNotFound(id.to_string()))?
+        };
+
+        // Mark it first: the supervisor is still alive at this point and
+        // would otherwise emit a final `Stopped` update *after* the
+        // frontend deleted the row, making it briefly reappear.
+        {
+            let mut h = handle.lock();
+            h.removed = true;
+        }
+
         self.stop(app, id)?;
-        // Defer actual removal so the reader task can drain — easier
-        // than synchronously waiting here.
         self.inner.lock().remove(id);
+
+        let _ = app.emit(events::TUNNEL_REMOVED, id.to_string());
+        crate::tray::rebuild_menu(app);
         Ok(())
     }
 
@@ -306,6 +333,7 @@ fn spawn_supervisor(
                 .map(|s| s.settings())
                 .unwrap_or_default();
             let override_path = settings.cloudflared_path.as_deref();
+            let auto_restart = settings.auto_restart;
             let tunnel_token = secrets::tunnel_token().ok().flatten();
             let tunnel_token = tunnel_token.as_deref();
 
@@ -321,7 +349,11 @@ fn spawn_supervisor(
             let args = provider.build_args(&target, protocol, tunnel_token);
             let extractor = provider.url_extractor();
 
-            log::info!("[tunnel] launching {} {:?}", bin.display(), args);
+            log::info!(
+                "[tunnel] launching {} {}",
+                bin.display(),
+                redacted_args(&args).join(" ")
+            );
             push_manager_log(
                 &app,
                 &handle,
@@ -402,7 +434,7 @@ fn spawn_supervisor(
                         h.edge_failure_count = 0;
                         h.updated_at = Utc::now();
                     }
-                    emit_updated(&app, &handle.lock().snapshot());
+                    publish(&app, &handle);
                     tokio::time::sleep(Duration::from_millis(750)).await;
                     continue;
                 }
@@ -416,27 +448,29 @@ fn spawn_supervisor(
             }
 
             // Decide whether to restart or stop.
-            let restart_decision = decide_restart(&handle, exit_status);
+            let restart_decision = decide_restart(&handle, auto_restart);
 
             match restart_decision {
                 Decision::Restart => {
                     log::warn!("[tunnel] restarting after unexpected exit");
                     // brief backoff
                     tokio::time::sleep(Duration::from_millis(750)).await;
-                    let mut h = handle.lock();
-                    h.status = TunnelStatus::Starting;
-                    h.updated_at = Utc::now();
-                    drop(h);
-                    emit_updated(&app, &handle.lock().snapshot());
+                    {
+                        let mut h = handle.lock();
+                        h.status = TunnelStatus::Starting;
+                        h.updated_at = Utc::now();
+                    }
+                    publish(&app, &handle);
                     continue;
                 }
                 Decision::Stop(reason) => {
-                    let mut h = handle.lock();
-                    h.status = reason;
-                    h.public_url = None;
-                    h.updated_at = Utc::now();
-                    drop(h);
-                    emit_updated(&app, &handle.lock().snapshot());
+                    {
+                        let mut h = handle.lock();
+                        h.status = reason;
+                        h.public_url = None;
+                        h.updated_at = Utc::now();
+                    }
+                    publish(&app, &handle);
                     // Keep the entry around until the user dismisses it
                     // — they may want to read the final log lines.
                     let _ = pool;
@@ -457,12 +491,18 @@ enum Decision {
 /// - if `auto_restart` is off → `Crashed`
 /// - if we've exceeded `RESTART_LIMIT` within `RESTART_WINDOW` → `Crashed`
 /// - otherwise → restart
-fn decide_restart(handle: &Arc<Mutex<TunnelHandle>>, _exit: ExitOutcome) -> Decision {
+fn decide_restart(handle: &Arc<Mutex<TunnelHandle>>, auto_restart: bool) -> Decision {
     let mut h = handle.lock();
     if matches!(h.status, TunnelStatus::Stopping) {
         return Decision::Stop(TunnelStatus::Stopped);
     }
     if matches!(h.status, TunnelStatus::Crashed) {
+        return Decision::Stop(TunnelStatus::Crashed);
+    }
+
+    // The user turned crash recovery off — surface the failure instead of
+    // silently relaunching.
+    if !auto_restart {
         return Decision::Stop(TunnelStatus::Crashed);
     }
 
@@ -600,6 +640,8 @@ fn handle_log_line(
     let now = Utc::now();
     let id = handle.lock().id.clone();
     let mut url_set: Option<String> = None;
+    let edge_success;
+    let mut changed_url = false;
     let mut edge_failure_limit_reached = false;
     {
         let mut h = handle.lock();
@@ -613,7 +655,8 @@ fn handle_log_line(
             }
         }
 
-        if line_contains_edge_success(&line) {
+        edge_success = line_contains_edge_success(&line);
+        if edge_success {
             h.status = TunnelStatus::Live;
             h.edge_failure_count = 0;
         } else if line_contains_edge_failure(&line) && matches!(h.status, TunnelStatus::Starting) {
@@ -625,30 +668,33 @@ fn handle_log_line(
     }
 
     let event = TunnelLogEvent {
-        tunnel_id: id.clone(),
+        tunnel_id: id,
         line,
         stream,
         at: now,
     };
     let _ = app.emit(events::TUNNEL_LOG, &event);
 
-    if url_set.is_some() {
-        let snap = handle.lock().snapshot();
-        emit_updated(app, &snap);
-
-        // Persist to recent-URL history.
+    if let Some(url) = url_set {
+        // Persist to recent-URL history (only reached on the transition
+        // from "no URL" to "URL", so this fires at most once per child).
         if let Ok(store) = StoreHandle::open(app) {
+            let port = handle.lock().local_port;
             let _ = store.push_recent_url(RecentTunnel {
-                port: snap.local_port,
-                url: snap.public_url.clone().unwrap_or_default(),
+                port,
+                url: url.clone(),
                 at: now,
             });
-            let _ = store.push_recent_port(snap.local_port);
+            let _ = store.push_recent_port(port);
         }
+        changed_url = true;
     }
 
-    if line_contains_edge_success(&event.line) {
-        emit_updated(app, &handle.lock().snapshot());
+    // A single broadcast covers both transitions — the banner line and the
+    // "connection registered" line usually arrive separately, but nothing
+    // stops them from sharing a line.
+    if edge_success || changed_url {
+        publish(app, handle);
     }
 
     if edge_failure_limit_reached {
@@ -672,14 +718,30 @@ fn fail_tunnel(app: &AppHandle, handle: &Arc<Mutex<TunnelHandle>>, reason: &str)
     {
         let mut h = handle.lock();
         h.status = TunnelStatus::Crashed;
+        // A dead tunnel has no reachable address — leaving the old one up
+        // would show a URL that nothing answers on.
+        h.public_url = None;
         h.updated_at = Utc::now();
     }
     push_manager_log(app, handle, LogStream::Stderr, format!("[error] {reason}"));
-    emit_updated(app, &handle.lock().snapshot());
+    publish(app, handle);
 }
 
-fn emit_updated(app: &AppHandle, snap: &TunnelSnapshot) {
-    let _ = app.emit(events::TUNNEL_UPDATED, snap);
+/// Broadcast the current tunnel state to the UI and the tray.
+///
+/// Takes the handle rather than a pre-built snapshot so the lock is always
+/// released before we emit — `rebuild_menu()` re-enters `TunnelManager`
+/// and would deadlock against a guard held across the call.
+fn publish(app: &AppHandle, handle: &Arc<Mutex<TunnelHandle>>) {
+    let snap = {
+        let h = handle.lock();
+        if h.removed {
+            return;
+        }
+        h.snapshot()
+    };
+    let _ = app.emit(events::TUNNEL_UPDATED, &snap);
+    crate::tray::rebuild_menu(app);
 }
 
 fn normalize_hostname_url(hostname: &str) -> Option<String> {

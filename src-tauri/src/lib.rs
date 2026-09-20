@@ -68,7 +68,6 @@ pub fn run() {
             if let Err(e) = tray::install_tray(app.handle()) {
                 log::warn!("[tray] install failed: {e:?} — continuing without tray");
             }
-
             Ok(())
         })
         // ── Commands ─────────────────────────────────────────────────
@@ -106,7 +105,10 @@ pub fn run() {
                 let close_to_tray = store
                     .map(|s| s.settings().close_to_tray)
                     .unwrap_or(true);
+                // Hiding to a tray that doesn't exist would make the app
+                // unreachable, so fall back to a real quit.
                 if close_to_tray
+                    && tray::is_available()
                     && let Some(window) = handle.get_webview_window("main")
                 {
                     api.prevent_close();

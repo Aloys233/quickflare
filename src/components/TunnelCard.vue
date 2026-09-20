@@ -43,14 +43,22 @@ const stopLabel = computed(() => {
   }
 });
 
+function onRestart() {
+  if (props.tunnel.status === "live" || props.tunnel.status === "crashed") {
+    void store.restart(props.tunnel.id).catch(() => {
+      // Reported through `tunnels.lastError` → App.vue's toast.
+    });
+  }
+}
+
 function onStop() {
   if (props.tunnel.status === "live") {
-    void store.stop(props.tunnel.id).catch((e) => {
-      console.error("[tunnel] stop failed:", e);
+    void store.stop(props.tunnel.id).catch(() => {
+      /* reported via the toast */
     });
   } else {
-    void store.remove(props.tunnel.id).catch((e) => {
-      console.error("[tunnel] remove failed:", e);
+    void store.remove(props.tunnel.id).catch(() => {
+      /* reported via the toast */
     });
   }
 }
@@ -80,7 +88,7 @@ function viewLogs() {
         <button
           v-if="tunnel.status === 'live' || tunnel.status === 'crashed'"
           class="btn btn-ghost"
-          @click="store.restart(tunnel.id)"
+          @click="onRestart"
         >
           <svg
             viewBox="0 0 24 24"
@@ -128,6 +136,12 @@ function viewLogs() {
           class="text-xl text-red-600 dark:text-red-400"
         >
           启动失败
+        </span>
+        <span
+          v-else-if="tunnel.status === 'live'"
+          class="text-xl text-muted"
+        >
+          已连接 · 未配置公网域名
         </span>
         <span v-else class="text-xl text-muted">未连接</span>
       </div>

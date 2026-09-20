@@ -30,7 +30,7 @@ const stats = computed(() => [
   {
     label: "在线隧道",
     value: live.value.length,
-    suffix: live.value.length === 1 ? "个会话" : `${live.value.length} 个会话`,
+    suffix: "个会话",
   },
   {
     label: "活跃端口",
@@ -56,14 +56,14 @@ const greeting = ref(
 );
 
 function stopTunnel(id: string) {
-  void store.stop(id).catch((e) => {
-    console.error("[tunnel] stop failed:", e);
+  void store.stop(id).catch(() => {
+    // Reported through `tunnels.lastError` → App.vue's toast.
   });
 }
 
 function removeTunnel(id: string) {
-  void store.remove(id).catch((e) => {
-    console.error("[tunnel] remove failed:", e);
+  void store.remove(id).catch(() => {
+    // Reported through `tunnels.lastError` → App.vue's toast.
   });
 }
 </script>

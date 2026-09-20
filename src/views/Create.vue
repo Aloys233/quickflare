@@ -10,7 +10,7 @@
  * 隧道的状态会通过 `tunnel://updated` 事件实时同步到 Pinia store，
  * 主界面会自动渲染出新的 Starting 卡片，并随后转为 Live。
  */
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { useScannerStore } from "@/stores/scanner";
@@ -26,7 +26,16 @@ const { ports } = storeToRefs(scanner);
 
 const port = ref<number | null>(props.prefilledPort ?? null);
 const label = ref("");
-const error = ref<string | null>(null);
+
+// The component is reused when only the query changes (tray quick-create
+// while already on /create, or a second click from the scanner table), so
+// the initial value alone is not enough.
+watch(
+  () => props.prefilledPort,
+  (next) => {
+    if (next) port.value = next;
+  },
+);
 
 const quickPicks = computed(() =>
   ports.value
@@ -39,19 +48,15 @@ const cloudflaredReady = computed(
 );
 
 function submit() {
-  if (!port.value) return;
-  if (!cloudflaredReady.value) {
-    error.value = "cloudflared 未安装 — 请在「设置」里指定二进制路径。";
-    return;
-  }
+  // Failures from the backend are surfaced as a toast by the tunnels
+  // store, so the only thing worth blocking on here is a missing binary.
+  if (!port.value || !cloudflaredReady.value) return;
 
-  error.value = null;
   // 不 await：Rust 端会通过事件实时同步状态，主界面立刻可用。
-  // 任何同步阶段的错误（如端口已占用）会通过 catch 弹回控制台日志。
   void tunnels
     .create(port.value, label.value || undefined)
-    .catch((e) => {
-      console.error("[tunnel] create rejected:", e);
+    .catch(() => {
+      // Already reported via `tunnels.lastError` — the toast renders it.
     });
 
   // 立即路由到控制台 —— 用户在那里观察新隧道的启动过程。
@@ -144,7 +149,15 @@ function cancel() {
           </template>
           <template v-else>
             <span class="text-red-600 dark:text-red-400">未检测到 cloudflared</span>
-            — 请到「设置」指定路径
+            — 请先安装，或在
+            <button
+              type="button"
+              class="text-brand underline underline-offset-2"
+              @click="router.push('/settings')"
+            >
+              设置
+            </button>
+            里指定路径
           </template>
         </p>
         <div class="flex items-center gap-2">
@@ -152,7 +165,7 @@ function cancel() {
           <button
             type="submit"
             class="btn btn-primary"
-            :disabled="!port"
+            :disabled="!port || !cloudflaredReady"
           >
             <svg
               viewBox="0 0 24 24"
@@ -170,13 +183,6 @@ function cancel() {
           </button>
         </div>
       </div>
-
-      <p
-        v-if="error"
-        class="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-600 dark:text-red-400"
-      >
-        {{ error }}
-      </p>
     </form>
   </section>
 </template>

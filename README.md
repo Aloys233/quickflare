@@ -155,9 +155,11 @@ generate them with the official tool:
 npx @tauri-apps/cli icon path/to/source.png
 ```
 
-The `tray.png` should be a **monochrome 22×22** PNG; we set
-`iconAsTemplate: true` so macOS automatically inverts it for the menu
-bar's appearance.
+The `tray.png` should be a **monochrome 22×22** PNG. It is embedded in the
+binary and registered from `tray.rs` rather than declared in
+`tauri.conf.json` — Tauri would otherwise create a *second*, menu-less tray
+icon with the same id. We set `icon_as_template(true)` so macOS
+automatically inverts it for the menu bar's appearance.
 
 ## Wayland / KDE Plasma notes
 
@@ -173,12 +175,14 @@ bar's appearance.
   WEBKIT_DISABLE_DMABUF_RENDERER=1 ./Quickflare_0.1.0_amd64.AppImage
   ```
 
-- We disable native window decorations (`decorations: false`) and ship
-  our own minimal title bar — keeps the typography consistent with the
-  rest of the UI under both `kwin_x11` and `kwin_wayland`.
+- We keep native window decorations (`decorations: true`) so the window
+  behaves the way the desktop expects under both `kwin_x11` and
+  `kwin_wayland`.
 - If you're on a tiling compositor (sway, hyprland) without a built-in
   SNI host, install one of: `waybar`, `swaync`, `i3status-rust`, or
-  use KDE's `plasma-systemtray` from a panel.
+  use KDE's `plasma-systemtray` from a panel. With no tray host at all,
+  Quickflare detects the missing tray and closing the window quits the
+  app instead of hiding it into nowhere.
 
 ## Roadmap (the architecture is already wired for these)
 

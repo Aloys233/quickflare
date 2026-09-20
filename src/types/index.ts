@@ -77,6 +77,8 @@ export interface CloudflaredStatus {
   installed: boolean;
   path: string | null;
   overrideUsed: boolean;
+  /** Whether the in-app download flow can work on this platform. */
+  canDownload: boolean;
 }
 
 export type CloudflaredDownloadPhase =

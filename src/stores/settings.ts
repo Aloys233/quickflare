@@ -35,14 +35,38 @@ export const useSettingsStore = defineStore("settings", {
 
   actions: {
     async hydrate(): Promise<void> {
-      const [settings, cloudflared, tunnelToken] = await Promise.all([
+      // The three probes are independent: a platform keyring that isn't
+      // available must not wipe out the settings, which previously made the
+      // whole preferences page look unconfigured and suppressed the
+      // "cloudflared is missing" prompt.
+      const [settings, cloudflared, tunnelToken] = await Promise.allSettled([
         api.getSettings(),
         api.cloudflaredStatus(),
         api.tunnelTokenStatus(),
       ]);
-      this.settings = settings;
-      this.cloudflared = cloudflared;
-      this.tunnelToken = tunnelToken;
+
+      if (settings.status === "fulfilled") {
+        this.settings = settings.value;
+      } else {
+        console.error("[settings] get_settings failed:", settings.reason);
+      }
+      if (cloudflared.status === "fulfilled") {
+        this.cloudflared = cloudflared.value;
+      } else {
+        console.error(
+          "[settings] cloudflared_status failed:",
+          cloudflared.reason,
+        );
+      }
+      if (tunnelToken.status === "fulfilled") {
+        this.tunnelToken = tunnelToken.value;
+      } else {
+        console.error(
+          "[settings] tunnel_token_status failed:",
+          tunnelToken.reason,
+        );
+      }
+
       this.hydrated = true;
     },
 
@@ -50,8 +74,13 @@ export const useSettingsStore = defineStore("settings", {
       const next = { ...this.settings, ...patch };
       await api.saveSettings(next);
       this.settings = next;
-      // The cloudflared override may have changed — re-probe.
-      this.cloudflared = await api.cloudflaredStatus();
+      // The cloudflared override may have changed — re-probe. A probe
+      // failure must not make a successful save look like it failed.
+      try {
+        this.cloudflared = await api.cloudflaredStatus();
+      } catch (e) {
+        console.error("[settings] cloudflared re-probe failed:", e);
+      }
     },
 
     async downloadCloudflared(mirror?: string): Promise<void> {
