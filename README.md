@@ -94,7 +94,8 @@ sudo apt install -y \
   libxdo-dev \
   libssl-dev \
   libayatana-appindicator3-dev \
-  librsvg2-dev
+  librsvg2-dev \
+  cloudflared
 ```
 
 ### Linux (Arch / KDE Plasma)
@@ -106,7 +107,8 @@ sudo pacman -S --needed \
   curl wget file \
   openssl \
   libayatana-appindicator \
-  librsvg
+  librsvg \
+  cloudflared
 ```
 
 ### macOS
